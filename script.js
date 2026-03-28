@@ -247,6 +247,7 @@ async function loadNews() {
 
         if (resp.status === 401) throw new Error("Invalid API Key");
         if (resp.status === 402) throw new Error("Daily API Limit Reached");
+        if (resp.status === 403) throw new Error("API Access Forbidden");
         if (!resp.ok) throw new Error(`HTTP Error ${resp.status}`);
 
         const data = await resp.json();
@@ -301,8 +302,10 @@ async function loadNews() {
         console.error('News API Error:', error);
         let userMessage = "Could not load news at this moment.";
         
-        if (error.message.includes("API Limit")) {
+        if (error.message.includes("API Limit") || error.status === 402) {
             userMessage = "News limit reached for today. Please check back tomorrow!";
+        } else if (error.message.includes("Forbidden") || error.status === 403) {
+            userMessage = "Access denied by News API. Please check if your API key is active and allows requests from your current domain.";
         } else if (error.name === 'AbortError') {
             userMessage = "The news source is taking too long to respond. Please try refreshing.";
         }
@@ -559,13 +562,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Back to Top Button Logic
     const backToTopButton = document.getElementById("back-to-top");
     if (backToTopButton) {
-        window.onscroll = function() {
+        window.addEventListener('scroll', () => {
             if (document.body.scrollTop > 300 || document.documentElement.scrollTop > 300) {
                 backToTopButton.style.display = "block";
             } else {
                 backToTopButton.style.display = "none";
             }
-        };
+        });
         backToTopButton.addEventListener("click", () => {
             window.scrollTo({ top: 0, behavior: "smooth" });
         });
