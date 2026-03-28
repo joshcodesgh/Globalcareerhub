@@ -2,22 +2,25 @@
 const jobsContainer = document.getElementById('jobs');
 const newsContainer = document.getElementById('news-container');
 
-// Set the backend API URL. 
-// Use 'http://localhost:3000' for local development and your production URL for deployment.
-const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-    ? 'http://localhost:3000' 
-    : 'https://globalcareerhub.up.railway.app'; // Standardized spelling
+// --- API CONFIGURATION ---
+// WARNING: Keys are visible in frontend-only mode.
+const FINDWORK_TOKEN = '69d926c1efac94d21b71312a139f02230ffe6127';
+const WORLD_NEWS_API_KEY = '3aa0ad6044cc4351b2cdd966f0015659';
+const REQUEST_TIMEOUT = 30000; // Increased to 30 seconds for slow proxies
+
+const loadingPlaceholder = `
+        <div id="loading-notice" style="text-align:center; padding: 20px 20px 0 20px;">
+            <p style="font-size: 1.2rem; color: #333;">Loading latest jobs from our sources...</p>
+            <p style="color: #666;">The server may take a moment to wake up. While you wait, check these platforms:</p>
+        </div>`;
 
 async function loadJobs() {
     if (!jobsContainer) return; // Stop if we are on a page without the jobs list
 
     // Show a loading message and visa sponsorship platforms while fetching
     jobsContainer.innerHTML = `
-        <div style="text-align:center; padding: 20px 20px 0 20px;">
-            <p style="font-size: 1.2rem; color: #333;">Loading latest jobs from our sources...</p>
-            <p style="color: #666;">While you wait, here are 10 great platforms for finding visa-sponsored roles:</p>
-        </div>
-        <div style="max-width: 1000px; margin: 20px auto; padding: 0 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+        ${loadingPlaceholder}
+        <div class="jobs-grid">
             
             <div class="job-card">
                 <h3>LinkedIn</h3>
@@ -79,42 +82,108 @@ async function loadJobs() {
                 <a href="https://www.glassdoor.com/Job/" target="_blank" rel="noopener noreferrer" class="apply-btn">Visit Glassdoor</a>
             </div>
         </div>
-        <p style="text-align:center; margin-top: 40px; font-weight: bold; color: var(--primary-color);">Our aggregated job list will appear below shortly...</p>
+        <div id="aggregated-jobs-list" class="jobs-grid"></div>
+        <p id="wait-msg" style="text-align:center; margin-top: 40px; font-weight: bold; color: var(--primary-color);">Our aggregated job list will appear below shortly...</p>
     `;
 
-    // --- API Security Note ---
-    // All API calls are now routed through our own backend server (server.js).
-    // This keeps our API keys secure and off the client-side.
+    const jobListContainer = document.getElementById('aggregated-jobs-list');
+    const waitMsg = document.getElementById('wait-msg');
 
-    try {
-        // Fetch from our own backend server, which runs on localhost:3000
-        const response = await fetch(`${API_BASE_URL}/api/jobs`);
-        const allJobs = await response.json();
-
-        // Clear loading message
-        jobsContainer.innerHTML = '';
-
-        if (!allJobs || allJobs.length === 0) {
-            jobsContainer.innerHTML = '<p style="text-align:center;">Sorry, we could not load jobs from our sources at this moment. This may be due to a temporary API issue. Please try again later.</p>';
-            return;
+    const fetchAndDisplay = async (fetchFn) => {
+        const jobs = await fetchFn();
+        if (jobs && jobs.length > 0) {
+            // Remove loading UI elements on first successful batch
+            const loadingNotice = document.getElementById('loading-notice');
+            if (loadingNotice) loadingNotice.remove();
+            if (waitMsg) waitMsg.remove();
+            
+            renderJobs(jobs, jobListContainer);
         }
+    };
 
-        // Render all jobs
-        renderJobs(allJobs);
+    // Fire all fetches in parallel - they will update the UI as they resolve
+    fetchAndDisplay(fetchFindwork);
+    fetchAndDisplay(fetchRemotive);
+    fetchAndDisplay(fetchRemoteOK);
 
-    } catch (error) {
-        console.error('Failed to load jobs from backend:', error);
-        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-        const helpText = isLocal 
-            ? 'Please make sure the server is running by typing <code>node server.js</code> in your terminal.' 
-            : 'The job service might be starting up. Please refresh the page in about 30 seconds.';
-        jobsContainer.innerHTML = `<p style="text-align:center; color: red; font-weight: bold;"><b>Error: Could not connect to the backend server.</b><br>${helpText}</p>`;
-    }
+    // Fallback: If after 15 seconds nothing has loaded, show a warning
+    setTimeout(() => {
+        if (jobListContainer && jobListContainer.children.length === 0) {
+            if (waitMsg) waitMsg.innerHTML = "Sources are taking longer than usual. Please refresh if jobs don't appear.";
+        }
+    }, 15000);
+}
+
+async function fetchFindwork() {
+    if (!FINDWORK_TOKEN || FINDWORK_TOKEN.includes('YOUR_')) return [];
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+        
+        const targetUrl = 'https://findwork.dev/api/jobs/';
+        const resp = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, {
+            headers: { 'Authorization': `Token ${FINDWORK_TOKEN}` },
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        const data = await resp.json();
+        return data.results.map(job => ({
+            title: job.role,
+            company: job.company_name,
+            location: job.location || 'Remote',
+            type: job.employment_type,
+            salary: "Competitive",
+            url: job.url,
+            badge: "Findwork"
+        }));
+    } catch (e) { return []; }
+}
+
+async function fetchRemotive() {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+
+        const targetUrl = 'https://remotive.com/api/remote-jobs';
+        const resp = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        const data = await resp.json();
+        return data.jobs.map(job => ({
+            title: job.title,
+            company: job.company_name,
+            location: job.candidate_required_location,
+            type: "Remote",
+            salary: job.salary || "Not Disclosed",
+            url: job.url,
+            badge: "Remotive"
+        }));
+    } catch (e) { return []; }
+}
+
+async function fetchRemoteOK() {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+
+        const targetUrl = 'https://remoteok.com/api';
+        const resp = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        const data = await resp.json();
+        return data.slice(1).map(job => ({
+            title: job.position,
+            company: job.company,
+            location: job.location || 'Remote',
+            type: "Varies",
+            salary: "Competitive",
+            url: job.url,
+            badge: "RemoteOK"
+        }));
+    } catch (e) { return []; }
 }
 
 // --- Job Renderer ---
-function renderJobs(allJobs) {
-    if (!jobsContainer) return;
+function renderJobs(allJobs, container = jobsContainer) {
+    if (!container) return;
     allJobs.forEach(job => {
         const card = document.createElement('div');
         card.className = 'job-card';
@@ -151,7 +220,7 @@ function renderJobs(allJobs) {
         card.appendChild(createDetail('Salary', job.salary));
         card.appendChild(link);
 
-        jobsContainer.appendChild(card);
+        container.appendChild(card);
     });
 }
 
@@ -159,13 +228,29 @@ function renderJobs(allJobs) {
 async function loadNews() {
     if (!newsContainer) return; // Stop if we are not on the news page
 
+    if (!WORLD_NEWS_API_KEY || WORLD_NEWS_API_KEY.includes('YOUR_')) {
+        console.warn("⚠️ WORLD_NEWS_API_KEY is not set. News section will remain empty.");
+        newsContainer.innerHTML = '<p style="text-align:center;">Please configure your News API key to see latest updates.</p>';
+        return;
+    }
+
     newsContainer.innerHTML = '<p style="text-align:center;">Loading latest news...</p>';
 
     try {
-        // Fetch news from our own backend server
-        const response = await fetch(`${API_BASE_URL}/api/news`);
-        const data = await response.json();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
 
+        // Reduced count to 10 to save API points and improve speed
+        const targetUrl = `https://api.worldnewsapi.com/search-news?text=remote+work+tech&language=en&number=50&api-key=${WORLD_NEWS_API_KEY}`;
+        const resp = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (resp.status === 401) throw new Error("Invalid API Key");
+        if (resp.status === 402) throw new Error("Daily API Limit Reached");
+        if (!resp.ok) throw new Error(`HTTP Error ${resp.status}`);
+
+        const data = await resp.json();
+        
         newsContainer.innerHTML = '';
 
         if (!data.news || data.news.length === 0) {
@@ -213,12 +298,16 @@ async function loadNews() {
         newsContainer.appendChild(grid);
 
     } catch (error) {
-        console.error('Failed to load news from backend:', error);
-        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-        const helpText = isLocal 
-            ? 'Please ensure the server is running by typing <code>node server.js</code> in your terminal.' 
-            : 'The news service is temporarily unavailable. Please try again later.';
-        newsContainer.innerHTML = `<p style="text-align:center; color: red; font-weight: bold;"><b>Error: Could not connect to the backend server.</b><br>${helpText}</p>`;
+        console.error('News API Error:', error);
+        let userMessage = "Could not load news at this moment.";
+        
+        if (error.message.includes("API Limit")) {
+            userMessage = "News limit reached for today. Please check back tomorrow!";
+        } else if (error.name === 'AbortError') {
+            userMessage = "The news source is taking too long to respond. Please try refreshing.";
+        }
+
+        newsContainer.innerHTML = `<p style="text-align:center; color: #666; padding: 20px; border: 1px dashed #ccc; border-radius: 8px;">${userMessage}</p>`;
     }
 }
 
@@ -335,10 +424,10 @@ function initEmailJSContactForm() {
     }
     // --- End Modal Logic ---
 
-    // ⚠️ IMPORTANT: You need to add your EmailJS Public Key here
-    // You can get this from your EmailJS account settings (Account > API Keys).
+    // ⚠️ CRITICAL: The Public Key must match the account owning the Service ID.
+    // Find this at: https://dashboard.emailjs.com/admin/account
     emailjs.init({
-        publicKey: 'nIpbHMsl-Wu6CsP0q',
+        publicKey: 'Fdnz8ImnJgqwLeeC0',
     });
 
     contactForm.addEventListener('submit', function(e) {
@@ -351,20 +440,26 @@ function initEmailJSContactForm() {
 
         // ⚠️ IMPORTANT: You need to add your EmailJS Service ID and Template ID here
         // These are found in your EmailJS dashboard.
-        const serviceID = 'service_kwame';
-        const templateID = 'template_z9xwu2e';
+        const serviceID = 'service_f1h2o09';
+        const templateID = 'template_4jwkvq7';
 
         emailjs.sendForm(serviceID, templateID, this)
             .then(() => {
                 showSuccessConfirmation(); // This will either show the modal or the alert
                 contactForm.reset(); 
             }, (err) => {
-                let errorMessage = 'Oops! There was a problem sending your message. Please try again later.';
-                if (err && err.text) {
+                let errorMessage = 'Oops! There was a problem sending your message.';
+
+                // Improved error detection for 404 "Account not found"
+                if (err && (err.status === 404 || (err.text && err.text.toLowerCase().includes("not found")))) {
+                    errorMessage = 'EmailJS Error: Account or Service not found. Please verify your Public Key and Service ID.';
+                } else if (err && err.status === 412) {
+                    errorMessage = 'Email service authentication failed. Please contact the administrator to reconnect the Gmail API.';
+                } else if (err && err.text) {
                     errorMessage = `Error: ${err.text}`;
                 }
                 alert(errorMessage);
-                console.error('EmailJS Error:', JSON.stringify(err));
+                console.error('EmailJS Error:', err);
             })
             .finally(() => {
                 button.textContent = originalText;

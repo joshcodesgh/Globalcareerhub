@@ -26,6 +26,9 @@ self.addEventListener('install', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
+    // Skip intercepting requests to external APIs (CORS proxy)
+    if (!e.request.url.startsWith(self.location.origin)) return;
+
     e.respondWith(
         caches.match(e.request).then((response) => response || fetch(e.request))
     );
